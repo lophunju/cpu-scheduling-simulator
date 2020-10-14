@@ -123,7 +123,9 @@ struct process* SFSschedule() {
 
 void printResult() {
 	// DO NOT CHANGE THIS FUNCTION
-	int i, totalWallTime=0, totalRegValue=0;
+	int i;
+	long totalProcIntArrTime=0,totalProcServTime=0,totalIOReqIntArrTime=0,totalIOServTime=0;
+	long totalWallTime=0, totalRegValue=0;
 	for(i=0; i < NPROC; i++) {
 		totalWallTime += procTable[i].endTime - procTable[i].startTime;
 		/*
@@ -131,9 +133,21 @@ void printResult() {
 			i,procTable[i].serviceTime,procTable[i].targetServiceTime, procTable[i].saveReg0);
 		*/
 		totalRegValue += procTable[i].saveReg0+procTable[i].saveReg1;
+		/* printf("reg0 %d reg1 %d totalRegValue %d\n",procTable[i].saveReg0,procTable[i].saveReg1,totalRegValue);*/
 	}
-	printf("%d Process processed - Average Wall Clock Service Time : %g Average Two Register Sum Value %g\n",
-		NPROC, (float) totalWallTime/NPROC, (float) totalRegValue/NPROC);
+	for(i = 0; i < NPROC; i++ ) { 
+		totalProcIntArrTime += procIntArrTime[i];
+		totalProcServTime += procServTime[i];
+	}
+	for(i = 0; i < NIOREQ; i++ ) { 
+		totalIOReqIntArrTime += ioReqIntArrTime[i];
+		totalIOServTime += ioServTime[i];
+	}
+	
+	printf("Avg Proc Inter Arrival Time : %g \tAverage Proc Service Time : %g\n", (float) totalProcIntArrTime/NPROC, (float) totalProcServTime/NPROC);
+	printf("Avg IOReq Inter Arrival Time : %g \tAverage IOReq Service Time : %g\n", (float) totalIOReqIntArrTime/NIOREQ, (float) totalIOServTime/NIOREQ);
+	printf("%d Process processed with %d IO requests\n", NPROC,NIOREQ);
+	printf("Average Wall Clock Service Time : %g \tAverage Two Register Sum Value %g\n", (float) totalWallTime/NPROC, (float) totalRegValue/NPROC);
 	
 }
 
@@ -195,6 +209,7 @@ int main(int argc, char *argv[]) {
 	}
 	
 	ioReqAvgIntArrTime = totalProcServTime/(NIOREQ+1);
+	assert(ioReqAvgIntArrTime > MIN_IOREQ_INT_ARRTIME);
 	
 	// generate io request interarrival time
 	for(i = 0; i < NIOREQ; i++ ) { 
