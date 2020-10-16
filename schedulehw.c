@@ -1,7 +1,8 @@
 //
+// 2020-2 Operating System
 // CPU Schedule Simulator Homework
-// Student Number :
-// Name :
+// Student Number : B511072
+// Name : 박주훈 ( Park Juhun )
 //
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +18,9 @@
 #define S_BLOCKED 2
 #define S_RUNNING 3
 #define S_TERMINATE 4
+
+// #define DEBUG 1
+// #define LOG 1
 
 int NPROC, NIOREQ, QUANTUM;
 
@@ -55,7 +59,7 @@ void compute() {
 	// DO NOT CHANGE THIS FUNCTION
 	cpuReg0 = cpuReg0 + runningProc->id;
 	cpuReg1 = cpuReg1 + runningProc->id;
-	//printf("In computer proc %d cpuReg0 %d\n",runningProc->id,cpuReg0);
+	// printf("In computer proc %d cpuReg0 %d\n",runningProc->id,cpuReg0);
 }
 
 void initProcTable() {
@@ -84,41 +88,266 @@ void procExecSim(struct process *(*scheduler)()) {
 	nextForkTime = procIntArrTime[nproc];
 	nextIOReqTime = ioReqIntArrTime[nioreq];
 
+	idleProc.id = -1;
+	runningProc = &idleProc;	// initial: idle process
+	pid = 0;
+
 	while(1) {
 		currentTime++;
 		qTime++;
 		runningProc->serviceTime++;
-		if (runningProc != &idleProc ) cpuUseTime++;
-		
-		// MUST CALL compute() Inside While loop
-		compute(); 
+		if (runningProc != &idleProc ) {
+			cpuUseTime++;
+			// MUST CALL compute() Inside While loop
+			compute();
+			// early save of register state
+			runningProc->saveReg0 = cpuReg0;
+			runningProc->saveReg1 = cpuReg1;
+		}
+
+		#ifdef LOG
+			printf("[[cTime:%d, pid:%d, qTime:(%d/%d), ST:(%d/%d)]]\n", 
+				currentTime, runningProc->id, qTime, QUANTUM, runningProc->serviceTime, runningProc->targetServiceTime);
+			printf("[[cpuUseTime:%d, nextIOReqTime:%d, nextForkTime:%d]]\n", cpuUseTime, nextIOReqTime, nextForkTime);
+		#endif
 		
 		if (currentTime == nextForkTime) { /* CASE 2 : a new process created */
+			
+			struct process* forked;
+			struct process* i;	// pointer for traversing ready queue
+
+			pid = nproc;
+			nproc++;
+			nextForkTime += procIntArrTime[nproc];	// update next fork time
+			
+			// find tail of ready queue
+			i = &readyQueue;
+			while (i->next != &readyQueue)
+				i = i->next;
+			
+			// fork and set startTime
+			forked = &procTable[pid];
+			forked->startTime = currentTime;
+			// push into ready queue
+			i->next = forked;
+			forked->prev = i;
+			// keep circular queue structure
+			forked->next = &readyQueue;
+			readyQueue.prev = forked;
+
+			forked->state = S_READY;
+			readyQueue.len++;
+
+			nextState = S_READY;	// mark next state of current running process
+
+			schedule = 1;	//	set schedule flag on
+			#ifdef LOG
+				printf("%d-th process forked and passed to ready queue\n", pid);
+			#endif
 		}
 		if (qTime == QUANTUM ) { /* CASE 1 : The quantum expires */
+
+			if (runningProc != &idleProc){
+				nextState = S_READY;	// mark next state of current running process
+				schedule = 1;	//	set schedule flag on
+			}
+			#ifdef LOG
+				printf("%d-th process quantum expired\n", runningProc->id);
+			#endif
 		}
 		while (ioDoneEventQueue.next->doneTime == currentTime) { /* CASE 3 : IO Done Event */
+			
+			struct ioDoneEvent* doneEvent;
+			struct process* targetProc;
+			struct process* i;	// pointer for traversing ready queue
+
+			pid = ioDoneEventQueue.next->procid;
+			targetProc = &procTable[pid];
+			#ifdef LOG
+				printf("IO Done for %d-th process\n", pid);
+				printf("%d-th process state: %d\n", pid, targetProc->state);
+			#endif
+			// pop from ioDoneEventQueue, loop condition changes here
+			doneEvent = ioDoneEventQueue.next;
+			ioDoneEventQueue.next = doneEvent->next;	//	if doneEvent was last, doneEvent->next is &ioDoneEventQueue
+			(ioDoneEventQueue.next)->prev = &ioDoneEventQueue;
+			ioDoneEventQueue.len--;
+
+			if (targetProc->state == S_BLOCKED){	// if not terminated
+				// find tail of ready queue
+				i = &readyQueue;
+				while (i->next != &readyQueue)
+					i = i->next;
+				// push into ready queue
+				i->next = targetProc;
+				targetProc->prev = i;
+				// keep circular queue structure
+				targetProc->next = &readyQueue;
+				readyQueue.prev = targetProc;
+
+				targetProc->state = S_READY;
+				readyQueue.len++;
+				#ifdef LOG
+					printf("blocked %d-th process passed to ready queue\n", targetProc->id);
+				#endif
+			}
+
+			nextState = S_READY;	// mark next state of current running process
+
+			schedule = 1;	//	set schedule flag on
 		}
-		if (cpuUseTime == nextIOReqTime) { /* CASE 5: reqest IO operations (only when the process does not terminate) */
+		if (cpuUseTime == nextIOReqTime && runningProc != &idleProc) { /* CASE 5: reqest IO operations (only when the process does not terminate) */
+			// it works only when running process exist
+			
+			struct ioDoneEvent *event, *temp;
+			struct ioDoneEvent* i;	// pointer for traversing ioDoneEventQueue
+
+			event = &ioDoneEvent[nioreq];
+			event->procid = runningProc->id;
+			event->doneTime = currentTime + ioServTime[nioreq];
+			#ifdef LOG
+				printf("IO request occurs for %d-th process, will done at %d\n", event->procid, event->doneTime);
+			#endif
+			/* when insert, considering order ascending with doneTime
+			inserted timing order is guaranteed within same doneTime */
+			// find insertion point
+			i = &ioDoneEventQueue;
+			while ((i->next)->doneTime <= event->doneTime)
+				i = i->next;
+			// insert into ioDoneEventQueue
+			temp = i->next;
+			i->next = event;
+			event->prev = i;
+			event->next = temp;
+			temp->prev = event;
+			ioDoneEventQueue.len++;
+
+			nextState = S_BLOCKED;	// mark next state of current running process
+
+			schedule = 1;	//	set schedule flag on
+
+			nioreq++;
+			nextIOReqTime += ioReqIntArrTime[nioreq];	// update nextIOReqTime
+			#ifdef LOG
+				printf("next IOReqTime: %d\n", nextIOReqTime);
+			#endif
 		}
 		if (runningProc->serviceTime == runningProc->targetServiceTime) { /* CASE 4 : the process job done and terminates */
+			// idle process avoid this if condition (idleProc.sT > 0, idleProc.tST == 0)
+			runningProc->endTime = currentTime;
+
+			nextState = S_TERMINATE;	// mark next state of current running process
+			termProc++;
+
+			schedule = 1;	//	set schedule flag on
+			#ifdef LOG
+				printf("%d-th process terminated (%d/%d)\n", runningProc->id, termProc, nproc);
+			#endif
 		}
-		
-		// call scheduler() if needed
+
+		if (nproc == termProc && nproc == NPROC)	// if all processes are terminated
+			break;	// just ignore remained IO events. They doesn't affect to printResult anymore.
+
+		if (schedule){	// when scehdule flag is on
+			struct process* i;
+
+			// change into nextState
+			runningProc->state = nextState;
+
+			switch (nextState){
+			case 1: // S_READY
+			{
+				if (runningProc != &idleProc){
+					// find tail of ready queue
+					i = &readyQueue;
+					while (i->next != &readyQueue)
+						i = i->next;
+					// push into ready queue
+					i->next = runningProc;
+					runningProc->prev = i;
+					// keep circular queue structure
+					runningProc->next = &readyQueue;
+					readyQueue.prev = runningProc;
+					readyQueue.len++;
+					#ifdef LOG
+						printf("running %d-th process passed to ready queue\n", runningProc->id);
+					#endif
+				}
+				break;
+			}
+			case 2: // S_BLOCKED
+				// block queue is not needed, being able to handle with ioDoneEventQueue-procid and process state
+				#ifdef LOG
+					printf("running %d-th process is blocked\n", runningProc->id);
+				#endif
+				break;
+			case 4: // S_TERMINATE
+				// additional processing is not needed, changing state above is enough
+				break;
+			}
+			#ifdef LOG
+				printf("scheduler called\n");
+			#endif
+			// get new running process
+			runningProc = scheduler();
+			runningProc->state = S_RUNNING;
+			// restore register state
+			cpuReg0 = runningProc->saveReg0;
+			cpuReg1 = runningProc->saveReg1;
+
+			//reset variables
+			qTime = 0;
+			schedule = 0;
+			nextState = S_IDLE;
+		}
+
+		// 각종 flag들 초기화 필요
+		// 퀀텀, ioreq 표시하는 플래그 만들어서 priority 처리 하기
+		// 주석 정리 필요
 		
 	} // while loop
 }
 
 //RR,SJF(Modified),SRTN,Guaranteed Scheduling(modified),Simple Feed Back Scheduling
 struct process* RRschedule() {
+
+	struct process* selected;
+
+	// if ready queue is empty, return idle process
+	if (readyQueue.next == &readyQueue)
+		return &idleProc;
+
+	// pop from ready queue
+	selected = readyQueue.next;
+	readyQueue.next = selected->next;	// if selected was last, selected->next is &readyQueue
+	(readyQueue.next)->prev = &readyQueue;
+	readyQueue.len--;
+	
+	return selected;
 }
 struct process* SJFschedule() {
+
+	struct process* selected;
+
+	return selected;
 }
 struct process* SRTNschedule() {
+
+	struct process* selected;
+
+	return selected;
 }
 struct process* GSschedule() {
+
+	struct process* selected;
+
+	return selected;
 }
 struct process* SFSschedule() {
+
+	struct process* selected;
+
+	return selected;
 }
 
 void printResult() {
@@ -265,5 +494,5 @@ int main(int argc, char *argv[]) {
 	initProcTable();
 	procExecSim(schFunc);
 	printResult();
-	
+
 }
