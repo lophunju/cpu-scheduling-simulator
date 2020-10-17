@@ -82,7 +82,7 @@ void initProcTable() {
 
 void procExecSim(struct process *(*scheduler)()) {
 	int pid, qTime=0, cpuUseTime = 0, nproc=0, termProc = 0, nioreq=0;
-	char schedule = 0, nextState = S_IDLE;
+	char schedule = 0, nextState = S_IDLE, bitFlag = 0;
 	int nextForkTime, nextIOReqTime;
 	
 	nextForkTime = procIntArrTime[nproc];
@@ -150,6 +150,7 @@ void procExecSim(struct process *(*scheduler)()) {
 			if (runningProc != &idleProc){
 				nextState = S_READY;	// mark next state of current running process
 				schedule = 1;	//	set schedule flag on
+				bitFlag |= 1;	// set 01 bit on (quantum expire mark)
 			}
 			#ifdef LOG
 				printf("%d-th process quantum expired\n", runningProc->id);
@@ -225,6 +226,7 @@ void procExecSim(struct process *(*scheduler)()) {
 			nextState = S_BLOCKED;	// mark next state of current running process
 
 			schedule = 1;	//	set schedule flag on
+			bitFlag |= 2;	// set 10 bit on (IO request mark)
 
 			nioreq++;
 			nextIOReqTime += ioReqIntArrTime[nioreq];	// update nextIOReqTime
@@ -247,6 +249,18 @@ void procExecSim(struct process *(*scheduler)()) {
 
 		if (nproc == termProc && nproc == NPROC)	// if all processes are terminated
 			break;	// just ignore remained IO events. They doesn't affect to printResult anymore.
+
+		// update priority
+		switch (bitFlag) {
+		case 1:	// 01 : when quantum expired
+		case 3:	// 11 : or when quantum expired and IO requested
+			runningProc->priority--;
+			break;
+		case 2:	// 10 : when quantum unexpired and IO requested
+			runningProc->priority++;
+			break;
+		}
+		bitFlag = 0;	// bitFlag reset
 
 		if (schedule){	// when scehdule flag is on
 			struct process* i;
@@ -328,24 +342,116 @@ struct process* RRschedule() {
 struct process* SJFschedule() {
 
 	struct process* selected;
+	struct process* i;
+
+	// if ready queue is empty, return idle process
+	if (readyQueue.next == &readyQueue)
+		return &idleProc;
+
+	// traverse ready queue and find Shortest Job
+	selected = readyQueue.next;
+	i = selected;
+	while (i->next != &readyQueue){
+		if ( selected->targetServiceTime > (i->next)->targetServiceTime )
+			selected = i->next;
+		i = i->next;
+	}
+
+	// pop selected from ready queue
+	(selected->prev)->next = selected->next;
+	(selected->next)->prev = selected->prev;
+	readyQueue.len--;
 
 	return selected;
 }
 struct process* SRTNschedule() {
 
 	struct process* selected;
+	struct process* i;
+
+	int remainT1, remainT2;
+
+	// if ready queue is empty, return idle process
+	if (readyQueue.next == &readyQueue)
+		return &idleProc;
+
+	// traverse ready queue and find Shortest Remaining Time Job
+	selected = readyQueue.next;
+	i = selected;
+	remainT1 = selected->targetServiceTime - selected->serviceTime;
+	while (i->next != &readyQueue){
+		remainT2 = (i->next)->targetServiceTime - (i->next)->serviceTime;
+
+		if (remainT1 > remainT2){
+			selected = i->next;
+			remainT1 = selected->targetServiceTime - selected->serviceTime;
+		}
+		
+		i = i->next;
+	}
+
+	// pop selected from ready queue
+	(selected->prev)->next = selected->next;
+	(selected->next)->prev = selected->prev;
+	readyQueue.len--;
 
 	return selected;
 }
 struct process* GSschedule() {
 
 	struct process* selected;
+	struct process* i;
+
+	double ratio1, ratio2;
+
+	// if ready queue is empty, return idle process
+	if (readyQueue.next == &readyQueue)
+		return &idleProc;
+
+	// traverse ready queue and find Shortest Remaining Time Job
+	selected = readyQueue.next;
+	i = selected;
+	ratio1 = (double)selected->serviceTime / selected->targetServiceTime;
+	while (i->next != &readyQueue){
+		ratio2 = (double)(i->next)->serviceTime / (i->next)->targetServiceTime;
+
+		if (ratio1 > ratio2){
+			selected = i->next;
+			ratio1 = (double)selected->serviceTime / selected->targetServiceTime;
+		}
+		
+		i = i->next;
+	}
+
+	// pop selected from ready queue
+	(selected->prev)->next = selected->next;
+	(selected->next)->prev = selected->prev;
+	readyQueue.len--;
 
 	return selected;
 }
 struct process* SFSschedule() {
 
 	struct process* selected;
+	struct process* i;
+
+	// if ready queue is empty, return idle process
+	if (readyQueue.next == &readyQueue)
+		return &idleProc;
+
+	// traverse ready queue and find Shortest Job
+	selected = readyQueue.next;
+	i = selected;
+	while (i->next != &readyQueue){
+		if ( selected->priority < (i->next)->priority )
+			selected = i->next;
+		i = i->next;
+	}
+
+	// pop selected from ready queue
+	(selected->prev)->next = selected->next;
+	(selected->next)->prev = selected->prev;
+	readyQueue.len--;
 
 	return selected;
 }
