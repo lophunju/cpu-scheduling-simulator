@@ -314,10 +314,6 @@ void procExecSim(struct process *(*scheduler)()) {
 			schedule = 0;
 			nextState = S_IDLE;
 		}
-
-		// 각종 flag들 초기화 필요
-		// 퀀텀, ioreq 표시하는 플래그 만들어서 priority 처리 하기
-		// 주석 정리 필요
 		
 	} // while loop
 }
